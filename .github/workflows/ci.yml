@@ -134,13 +134,19 @@ jobs:
 
       # --- Firma con certificados de Apple (si están configurados) ---
       - name: Importar certificados de firma
-        if: ${{ env.IOS_CERTIFICATE_BASE64 != '' }}
+        id: import_certs
         env:
           IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
           IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
           IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
+          if [ -z "$IOS_CERTIFICATE_BASE64" ]; then
+            echo "Certificados iOS no configurados, build sin firma."
+            echo "has_cert=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           # Crear keychain temporal
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
@@ -155,13 +161,17 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "$IOS_PROVISION_PROFILE_BASE64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
 
-      - name: Build iOS (sin codesign si no hay certificados)
+          echo "has_cert=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build iOS (con o sin firma según certificados)
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
         run: |
-          if [ -n "${{ secrets.IOS_CERTIFICATE_BASE64 }}" ]; then
+          if [ -n "$IOS_CERTIFICATE_BASE64" ]; then
             flutter build ipa --release
           else
             flutter build ios --release --no-codesign
-            # Crear archivo IPA sin firma (para pruebas)
+            # Crear archivo IPA sin firma (para pruebas/distribución interna)
             mkdir -p Payload
             cp -r build/ios/iphoneos/Runner.app Payload/
             zip -r impostor_game-unsigned.ipa Payload/

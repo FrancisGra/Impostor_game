@@ -8,36 +8,8 @@ import 'package:impostor_game/providers/game_provider.dart';
 import 'package:impostor_game/screens/home_screen.dart';
 import 'package:impostor_game/screens/result_screen.dart';
 import 'package:impostor_game/screens/role_reveal_screen.dart';
-import 'package:impostor_game/screens/round_screen.dart';
 import 'package:impostor_game/data/categories.dart';
 import 'package:impostor_game/models/game_config.dart';
-
-/// Crea un [ProviderScope] con SharedPreferences vacías para tests.
-Widget buildTestApp({Widget? home, GameState? initialGameState}) {
-  SharedPreferences.setMockInitialValues({});
-  return ProviderScope(
-    overrides: [
-      sharedPreferencesProvider.overrideWith(
-        (ref) => throw UnimplementedError('Use FakeSharedPreferences'),
-      ),
-    ],
-    child: MaterialApp(
-      home: home ?? const HomeScreen(),
-    ),
-  );
-}
-
-/// Construye la app completa con ProviderScope y SharedPreferences mock.
-Future<ProviderContainer> buildContainer() async {
-  SharedPreferences.setMockInitialValues({});
-  final prefs = await SharedPreferences.getInstance();
-  final container = ProviderContainer(
-    overrides: [
-      sharedPreferencesProvider.overrideWithValue(prefs),
-    ],
-  );
-  return container;
-}
 
 void main() {
   setUpAll(() {
@@ -109,12 +81,13 @@ void main() {
         roundDurationSeconds: 0,
       );
       container.read(gameProvider.notifier).startGame(config);
-      // Simular que todos los roles fueron revelados
+      // Simular que todos los roles fueron revelados y la ronda terminó
       final state = container.read(gameProvider)!;
       for (var i = 0; i < state.players.length; i++) {
         container.read(gameProvider.notifier).revealRole();
         container.read(gameProvider.notifier).hideRole();
       }
+      container.read(gameProvider.notifier).endRound();
 
       await tester.pumpWidget(
         UncontrolledProviderScope(

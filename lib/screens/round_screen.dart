@@ -141,6 +141,7 @@ class _RoundScreenState extends ConsumerState<RoundScreen> {
 
 class _TimerDisplay extends StatelessWidget {
   const _TimerDisplay({
+    super.key,
     required this.seconds,
     required this.isRunning,
     required this.timeUp,
@@ -172,7 +173,6 @@ class _TimerDisplay extends StatelessWidget {
             fontSize: 96,
             fontWeight: FontWeight.bold,
             color: color,
-            fontFeatures: const [],
           ),
         ),
         if (timeUp)
@@ -190,7 +190,7 @@ class _TimerDisplay extends StatelessWidget {
 }
 
 class _PlayersList extends StatelessWidget {
-  const _PlayersList({required this.players});
+  const _PlayersList({super.key, required this.players});
   final List<String> players;
 
   @override

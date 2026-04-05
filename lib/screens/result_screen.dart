@@ -89,7 +89,7 @@ class ResultScreen extends ConsumerWidget {
 // ---------------------------------------------------------------------------
 
 class _RevealCard extends StatelessWidget {
-  const _RevealCard({required this.secretWord, required this.categoryName});
+  const _RevealCard({super.key, required this.secretWord, required this.categoryName});
 
   final String secretWord;
   final String categoryName;
@@ -134,6 +134,7 @@ class _RevealCard extends StatelessWidget {
 
 class _RoleListCard extends StatelessWidget {
   const _RoleListCard({
+    super.key,
     required this.title,
     required this.names,
     required this.color,

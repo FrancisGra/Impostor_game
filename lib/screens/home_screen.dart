@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../providers/game_provider.dart';
 import 'setup_screen.dart';
@@ -47,10 +46,10 @@ class HomeScreen extends ConsumerWidget {
                 key: const Key('btn_nueva_partida'),
                 icon: const Icon(Icons.play_arrow_rounded),
                 label: const Text('Nueva Partida'),
-                onPressed: () => _goToSetup(context, ref),
+                onPressed: () => _goToSetup(context),
               ),
               const SizedBox(height: 16),
-              _HowToPlayButton(),
+              const _HowToPlayButton(),
               const SizedBox(height: 24),
             ],
           ),
@@ -59,19 +58,18 @@ class HomeScreen extends ConsumerWidget {
     );
   }
 
-  void _goToSetup(BuildContext context, WidgetRef ref) {
+  void _goToSetup(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => ProviderScope(
-          parent: ProviderScope.containerOf(context),
-          child: const SetupScreen(),
-        ),
+        builder: (_) => const SetupScreen(),
       ),
     );
   }
 }
 
 class _HowToPlayButton extends StatelessWidget {
+  const _HowToPlayButton({super.key});
+
   @override
   Widget build(BuildContext context) {
     return TextButton.icon(

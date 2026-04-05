@@ -108,7 +108,7 @@ class RoleRevealScreen extends ConsumerWidget {
 // ---------------------------------------------------------------------------
 
 class _PassPhoneCard extends StatelessWidget {
-  const _PassPhoneCard({required this.playerName});
+  const _PassPhoneCard({super.key, required this.playerName});
   final String playerName;
 
   @override
@@ -154,6 +154,7 @@ class _PassPhoneCard extends StatelessWidget {
 
 class _RoleCard extends StatelessWidget {
   const _RoleCard({
+    super.key,
     required this.playerName,
     required this.isImpostor,
     this.secretWord,

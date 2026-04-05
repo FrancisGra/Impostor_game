@@ -253,7 +253,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
 // ---------------------------------------------------------------------------
 
 class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({required this.title});
+  const _SectionTitle({super.key, required this.title});
   final String title;
 
   @override
