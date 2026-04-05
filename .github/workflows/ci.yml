@@ -8,6 +8,10 @@ on:
   pull_request:
     branches: [ main ]
 
+# Minimal default permissions for the entire workflow
+permissions:
+  contents: read
+
 env:
   FLUTTER_VERSION: '3.22.0'
   JAVA_VERSION: '17'
@@ -19,6 +23,8 @@ jobs:
   test:
     name: Lint & Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout código
         uses: actions/checkout@v4
@@ -54,6 +60,8 @@ jobs:
     name: Build Android APK
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout código
         uses: actions/checkout@v4
@@ -118,6 +126,8 @@ jobs:
     name: Build iOS
     needs: test
     runs-on: macos-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout código
         uses: actions/checkout@v4
@@ -195,6 +205,8 @@ jobs:
     name: VirusTotal Scan
     needs: build-android
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Descargar APK arm64
         uses: actions/download-artifact@v4
