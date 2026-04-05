@@ -1,0 +1,392 @@
+name: CI/CD – El Impostor
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+
+# Minimal default permissions for the entire workflow
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.22.0'
+  JAVA_VERSION: '17'
+
+jobs:
+  # -------------------------------------------------------------------------
+  # 1. Lint & Tests
+  # -------------------------------------------------------------------------
+  test:
+    name: Lint & Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Configurar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Instalar dependencias
+        run: flutter pub get
+
+      - name: Análisis estático (flutter analyze)
+        run: flutter analyze --no-fatal-infos
+
+      - name: Ejecutar tests unitarios y de widget
+        run: flutter test --coverage
+
+      - name: Subir reporte de cobertura
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage/lcov.info
+          retention-days: 7
+
+  # -------------------------------------------------------------------------
+  # 2. Build APK (Android)
+  # -------------------------------------------------------------------------
+  build-android:
+    name: Build Android APK
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Configurar Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Configurar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Instalar dependencias
+        run: flutter pub get
+
+      # --- Firma con keystore (opcional: si se configuran los secretos) ---
+      - name: Decodificar keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "Keystore no configurado, build sin firma personalizada."
+            exit 0
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/keystore.jks
+          cat > android/key.properties <<EOF
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyPassword=$ANDROID_KEY_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          storeFile=keystore.jks
+          EOF
+
+      - name: Build APK (release)
+        run: flutter build apk --release --split-per-abi
+
+      - name: Build AAB (release)
+        run: flutter build appbundle --release
+
+      - name: Subir APK como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: |
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+            build/app/outputs/flutter-apk/app-x86_64-release.apk
+          retention-days: 30
+
+      - name: Subir AAB como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-aab
+          path: build/app/outputs/bundle/release/app-release.aab
+          retention-days: 30
+
+  # -------------------------------------------------------------------------
+  # 3. Build iOS (sin firma en CI público)
+  # -------------------------------------------------------------------------
+  build-ios:
+    name: Build iOS
+    needs: test
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Configurar Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Instalar dependencias
+        run: flutter pub get
+
+      # --- Firma con certificados de Apple (si están configurados) ---
+      - name: Importar certificados de firma
+        id: import_certs
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          if [ -z "$IOS_CERTIFICATE_BASE64" ]; then
+            echo "Certificados iOS no configurados, build sin firma."
+            echo "has_cert=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Crear keychain temporal
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+
+          # Importar certificado
+          echo "$IOS_CERTIFICATE_BASE64" | base64 --decode > certificate.p12
+          security import certificate.p12 -k build.keychain -P "$IOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+
+          # Instalar perfil de aprovisionamiento
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$IOS_PROVISION_PROFILE_BASE64" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
+
+          echo "has_cert=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build iOS (con o sin firma según certificados)
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+        run: |
+          if [ -n "$IOS_CERTIFICATE_BASE64" ]; then
+            flutter build ipa --release
+          else
+            flutter build ios --release --no-codesign
+            # Crear archivo IPA sin firma (para pruebas/distribución interna)
+            mkdir -p Payload
+            cp -r build/ios/iphoneos/Runner.app Payload/
+            zip -r impostor_game-unsigned.ipa Payload/
+            rm -rf Payload
+          fi
+
+      - name: Subir IPA como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: |
+            build/ios/ipa/*.ipa
+            impostor_game-unsigned.ipa
+          if-no-files-found: warn
+          retention-days: 30
+
+  # -------------------------------------------------------------------------
+  # 4. VirusTotal Scan
+  # -------------------------------------------------------------------------
+  virustotal-scan:
+    name: VirusTotal Scan
+    needs: build-android
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Descargar APK arm64
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: apk-artifacts
+
+      - name: Escanear APK en VirusTotal
+        id: vt_scan
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        run: |
+          if [ -z "$VT_API_KEY" ]; then
+            echo "VT_API_KEY no configurado, saltando escaneo."
+            echo "analysis_id=N/A" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          APK_FILE=$(find apk-artifacts -name "*arm64*.apk" | head -1)
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find apk-artifacts -name "*.apk" | head -1)
+          fi
+
+          if [ -z "$APK_FILE" ]; then
+            echo "No se encontró el APK para escanear."
+            echo "analysis_id=N/A" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Escaneando: $APK_FILE"
+          SHA256=$(sha256sum "$APK_FILE" | awk '{print $1}')
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+
+          # Subir archivo a VirusTotal
+          RESPONSE=$(curl --silent --request POST \
+            --url https://www.virustotal.com/api/v3/files \
+            --header "x-apikey: $VT_API_KEY" \
+            --form "file=@$APK_FILE")
+
+          ANALYSIS_ID=$(echo "$RESPONSE" | python3 -c \
+            "import sys,json; d=json.load(sys.stdin); print(d.get('data',{}).get('id','N/A'))" \
+            2>/dev/null || echo "N/A")
+
+          echo "analysis_id=$ANALYSIS_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Esperar resultado de VirusTotal
+        id: vt_result
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        run: |
+          ANALYSIS_ID="${{ steps.vt_scan.outputs.analysis_id }}"
+          if [ -z "$VT_API_KEY" ] || [ "$ANALYSIS_ID" = "N/A" ] || [ -z "$ANALYSIS_ID" ]; then
+            echo "malicious=0" >> "$GITHUB_OUTPUT"
+            echo "suspicious=0" >> "$GITHUB_OUTPUT"
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Esperando resultado del análisis (30 s)..."
+          sleep 30
+
+          RESULT=$(curl --silent --request GET \
+            --url "https://www.virustotal.com/api/v3/analyses/$ANALYSIS_ID" \
+            --header "x-apikey: $VT_API_KEY")
+
+          echo "$RESULT" > /tmp/vt_result.json
+
+          python3 - /tmp/vt_result.json "$GITHUB_OUTPUT" <<'PYEOF'
+          import sys, json
+
+          result_file, output_file = sys.argv[1], sys.argv[2]
+          try:
+              with open(result_file) as f:
+                  data = json.load(f)
+              attrs = data.get('data', {}).get('attributes', {})
+              stats = attrs.get('stats', {})
+              status   = attrs.get('status', 'unknown')
+              malicious   = stats.get('malicious', 0)
+              suspicious  = stats.get('suspicious', 0)
+              undetected  = stats.get('undetected', 0)
+              print(f"Estado: {status}, Malicioso: {malicious}, "
+                    f"Sospechoso: {suspicious}, No detectado: {undetected}")
+              with open(output_file, 'a') as f:
+                  f.write(f"malicious={malicious}\n")
+                  f.write(f"suspicious={suspicious}\n")
+                  f.write(f"status={status}\n")
+          except Exception as e:
+              print(f"Error procesando resultado: {e}")
+              with open(output_file, 'a') as f:
+                  f.write("malicious=0\nsuspicious=0\nstatus=error\n")
+          PYEOF
+
+      - name: Resumen de VirusTotal en Job Summary
+        run: |
+          SHA256="${{ steps.vt_scan.outputs.sha256 }}"
+          ANALYSIS_ID="${{ steps.vt_scan.outputs.analysis_id }}"
+          VT_STATUS="${{ steps.vt_result.outputs.status }}"
+          VT_MALICIOUS="${{ steps.vt_result.outputs.malicious }}"
+          VT_SUSPICIOUS="${{ steps.vt_result.outputs.suspicious }}"
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<SUMMARY
+          ## 🔍 VirusTotal Scan Results
+
+          | Campo | Valor |
+          |-------|-------|
+          | Analysis ID | \`${ANALYSIS_ID}\` |
+          | Estado | ${VT_STATUS} |
+          | Malicioso | ${VT_MALICIOUS:-N/A} |
+          | Sospechoso | ${VT_SUSPICIOUS:-N/A} |
+          | SHA-256 APK | \`${SHA256}\` |
+
+          🔗 [Ver análisis completo en VirusTotal](https://www.virustotal.com/gui/file/${SHA256})
+          SUMMARY
+
+      # Gate: falla si hay detecciones
+      - name: Gate de seguridad VirusTotal
+        if: ${{ steps.vt_result.outputs.malicious != '' && steps.vt_result.outputs.malicious != '0' }}
+        run: |
+          echo "⚠️ VirusTotal detectó ${{ steps.vt_result.outputs.malicious }} motor(es) marcando el APK como malicioso."
+          exit 1
+
+  # -------------------------------------------------------------------------
+  # 5. GitHub Release (en tags v*)
+  # -------------------------------------------------------------------------
+  release:
+    name: Publicar Release
+    needs: [ build-android, build-ios ]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Descargar APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: release-assets/android
+
+      - name: Descargar AAB
+        uses: actions/download-artifact@v4
+        with:
+          name: android-aab
+          path: release-assets/android
+
+      - name: Descargar IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-ipa
+          path: release-assets/ios
+        continue-on-error: true
+
+      - name: Crear GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "El Impostor ${{ github.ref_name }}"
+          body: |
+            ## 🕵️ El Impostor ${{ github.ref_name }}
+
+            Release automático generado por GitHub Actions.
+
+            ### Instaladores
+            - **Android APK (arm64-v8a)**: Para la mayoría de dispositivos modernos.
+            - **Android APK (armeabi-v7a)**: Para dispositivos más antiguos.
+            - **Android AAB**: Para publicar en Google Play.
+            - **iOS IPA**: Requiere firma de distribución para instalar en dispositivos.
+
+            ### Changelog
+            Ver commits en este release para ver los cambios incluidos.
+          files: |
+            release-assets/android/*.apk
+            release-assets/android/*.aab
+            release-assets/ios/*.ipa
+          draft: false
+          prerelease: false
